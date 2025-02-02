@@ -2,22 +2,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 from multiprocessing import Pool, cpu_count
+from numba import cuda
 
 # --- Coordinate Generation Function ---
 
 def generate_axes(real_range, imag_range, density, dtype=np.float32):
-    """
-    Generate the real and imaginary axes using numpy.linspace.
 
-    Parameters:
-        real_range (tuple): (min_real, max_real)
-        imag_range (tuple): (min_imag, max_imag)
-        density (int): Number of points in each axis.
-        dtype: Data type for the axes (default: np.float32).
-
-    Returns:
-        tuple: (realAxis, imagAxis)
-    """
     realAxis = np.linspace(real_range[0], real_range[1], density, dtype=dtype)
     imagAxis = np.linspace(imag_range[0], imag_range[1], density, dtype=dtype)
     return realAxis, imagAxis
@@ -25,17 +15,7 @@ def generate_axes(real_range, imag_range, density, dtype=np.float32):
 # --- Timing Function ---
 
 def time_execution(func, *args, **kwargs):
-    """
-    Execute a function and measure its execution time.
 
-    Parameters:
-        func (callable): The function to be timed.
-        *args: Positional arguments for the function.
-        **kwargs: Keyword arguments for the function.
-
-    Returns:
-        tuple: (result of func, elapsed time in seconds)
-    """
     start_time = time.time()
     result = func(*args, **kwargs)
     elapsed = time.time() - start_time
@@ -44,7 +24,6 @@ def time_execution(func, *args, **kwargs):
 # --- Sequential Version ---
 
 def count_iterations(c, threshold):
-    """Count iterations until divergence (or max threshold reached) for a given complex c."""
     z = 0j
     for iteration in range(threshold):
         z = z * z + c
@@ -53,7 +32,6 @@ def count_iterations(c, threshold):
     return threshold - 1
 
 def mandelbrot_seq(threshold, density, real_range=(-0.22, -0.219), imag_range=(-0.70, -0.699)):
-    """Sequential computation of the Mandelbrot set."""
     realAxis, imagAxis = generate_axes(real_range, imag_range, density, dtype=np.float64)
     atlas = np.empty((density, density), dtype=np.int32)
     
@@ -66,10 +44,7 @@ def mandelbrot_seq(threshold, density, real_range=(-0.22, -0.219), imag_range=(-
 # --- Multiprocessing Version ---
 
 def mandelbrot_row(args):
-    """
-    Worker function to compute one row of the Mandelbrot atlas.
-    'row_index' specifies which row (in the real axis) we are computing.
-    """
+ 
     row_index, realAxis, imagAxis, threshold = args
     row = np.empty(len(imagAxis), dtype=np.int32)
     cx = realAxis[row_index]
@@ -80,7 +55,6 @@ def mandelbrot_row(args):
 
 def mandelbrot_mp(threshold, density, num_processes=None,
                   real_range=(-0.22, -0.219), imag_range=(-0.70, -0.699)):
-    """Multiprocessing version of the Mandelbrot set calculation."""
     if num_processes is None:
         num_processes = cpu_count()
         
@@ -97,15 +71,10 @@ def mandelbrot_mp(threshold, density, num_processes=None,
     return atlas
 
 # --- CUDA Version ---
-# Ensure that you have a CUDA-capable GPU and Numba installed.
-from numba import cuda
 
 @cuda.jit
 def mandelbrot_kernel(realAxis, imagAxis, threshold, atlas):
-    """
-    CUDA kernel to compute Mandelbrot iterations.
-    Each thread computes one element of the atlas.
-    """
+
     ix, iy = cuda.grid(2)
     height, width = atlas.shape
 
@@ -123,25 +92,19 @@ def mandelbrot_kernel(realAxis, imagAxis, threshold, atlas):
 def mandelbrot_cuda(threshold, density,
                     real_range=(-0.22, -0.219), imag_range=(-0.70, -0.699),
                     threadsperblock=(16, 16)):
-    """CUDA-accelerated Mandelbrot set calculation."""
-    # Generate axes (using np.float32 for CUDA)
     realAxis, imagAxis = generate_axes(real_range, imag_range, density, dtype=np.float32)
     atlas = np.empty((density, density), dtype=np.int32)
     
-    # Allocate GPU memory
     d_realAxis = cuda.to_device(realAxis)
     d_imagAxis = cuda.to_device(imagAxis)
     d_atlas = cuda.to_device(atlas)
     
-    # Configure the blocks
     blockspergrid_x = int(np.ceil(density / threadsperblock[0]))
     blockspergrid_y = int(np.ceil(density / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
     
-    # Launch the kernel
     mandelbrot_kernel[blockspergrid, threadsperblock](d_realAxis, d_imagAxis, threshold, d_atlas)
     
-    # Copy the result back to host
     d_atlas.copy_to_host(atlas)
     return atlas
 
@@ -157,18 +120,7 @@ def plot_atlas(atlas, title="Mandelbrot Set"):
 
 def benchmark_multiprocessing(threshold, density, core_list,
                               real_range=(-0.22, -0.219), imag_range=(-0.70, -0.699)):
-    """
-    Benchmark the multiprocessing version over a list of process counts.
-    
-    Parameters:
-        threshold (int): Mandelbrot iteration threshold.
-        density (int): Density (size of one axis) for the square grid.
-        core_list (list): List of number of processes to test.
-        real_range, imag_range: Region to compute.
-    
-    Returns:
-        list: Execution times corresponding to each number of processes.
-    """
+
     mp_times = []
     for n in core_list:
         # Use time_execution to measure runtime.
@@ -179,19 +131,7 @@ def benchmark_multiprocessing(threshold, density, core_list,
 
 def benchmark_cuda_parallel(threshold, density, thread_configs, 
                             real_range=(-0.22, -0.219), imag_range=(-0.70, -0.699)):
-    """
-    Benchmark the CUDA version by varying the threads per block.
-    
-    Parameters:
-        threshold (int): Mandelbrot iteration threshold.
-        density (int): Density (size of one axis) for the square grid.
-        thread_configs (list): List of (threads_per_block_x, threads_per_block_y) to test.
-        real_range, imag_range: Region to compute.
-    
-    Returns:
-        list: Each element is a tuple (total_threads, execution time)
-              where total_threads = threads_per_block_x * threads_per_block_y.
-    """
+
     cuda_results = []
     
     for config in thread_configs:
@@ -206,19 +146,7 @@ def benchmark_cuda_parallel(threshold, density, thread_configs,
     return cuda_results
 
 def run_benchmarks(threshold, density):
-    """
-    Run benchmarks for the sequential, multiprocessing, and CUDA versions,
-    and plot the results in a single figure.
-    
-    The plot includes:
-        - A constant horizontal line for the sequential version.
-        - A curve for the multiprocessing version (execution time vs number of processes).
-        - A curve for the CUDA version (execution time vs total threads per block).
-    
-    Parameters:
-        threshold (int): Mandelbrot iteration threshold.
-        density (int): Density (size of one axis) for the square grid.
-    """
+
     # --- Sequential benchmark ---
     print("Running sequential version for benchmarking...")
     _, sequential_time = time_execution(mandelbrot_seq, threshold, density)
@@ -231,7 +159,6 @@ def run_benchmarks(threshold, density):
     mp_times = benchmark_multiprocessing(threshold, density, core_list)
     
     # --- CUDA benchmark ---
-    # Define CUDA thread configurations to test: (threads_per_block_x, threads_per_block_y)
     cuda_thread_configs = [
         (1, 1),
         (2, 2),
@@ -242,21 +169,16 @@ def run_benchmarks(threshold, density):
     print("\nStarting CUDA benchmark...")
     cuda_results = benchmark_cuda_parallel(threshold, 10000, cuda_thread_configs)
     
-    # --- Plotting all benchmarks together ---
     plt.figure(figsize=(10, 6))
     
-    # Plot the sequential constant line across the x-axis range of multiprocessing (process count)
     plt.hlines(sequential_time, core_list[0], core_list[-1], colors='g', 
                label=f'Sequential ({sequential_time:.4f}s)')
     
-    # Plot the multiprocessing results
     plt.plot(core_list, mp_times, marker='o', label='Multiprocessing')
     for x_pos, time in zip(core_list, mp_times):
             plt.annotate(f"{time: .2f}s", (x_pos, time), textcoords="offset points", xytext=(0,8), ha="center")
     
-    # Plot the CUDA results if available
     if cuda_results:
-        # Sort CUDA results by total threads
         cuda_results.sort(key=lambda x: x[0])
         cuda_threads, cuda_times = zip(*cuda_results)
         cuda_x_positions = np.linspace(min(core_list), max(core_list), len(cuda_results))
@@ -273,23 +195,21 @@ def run_benchmarks(threshold, density):
     plt.grid(True)
     plt.show()
 
-# --- Example Usage ---
 
 if __name__ == "__main__":
-    # Adjust these parameters as needed.
-    threshold = 500
-    density = 1000
+    # Adjust these parameters as needed. Threshold is how many times a pixel is reiterated before being placed
+    threshold = 500 #how many times each point is iterated over before becoming part of the mandelbrot set
+    density = 1000 #how many points there are (pixels in the fractal image)
 
-    # # Run a single calculation for each version and plot the result.
-    # print("Running sequential version...")
-    # atlas_seq, time_seq = time_execution(mandelbrot_seq, threshold, density)
-    # print(f"Sequential version took {time_seq:.4f} seconds")
-    # plot_atlas(atlas_seq, title="Mandelbrot Set (Sequential)")
+    print("Running sequential version...")
+    atlas_seq, time_seq = time_execution(mandelbrot_seq, threshold, density)
+    print(f"Sequential version took {time_seq:.4f} seconds")
+    plot_atlas(atlas_seq, title="Mandelbrot Set (Sequential)")
 
-    # print("Running multiprocessing version (4 cores)...")
-    # atlas_mp, time_mp = time_execution(mandelbrot_mp, threshold, density, 4)
-    # print(f"Multiprocessing version took {time_mp:.4f} seconds")
-    # plot_atlas(atlas_mp, title="Mandelbrot Set (Multiprocessing)")
+    print("Running multiprocessing version (4 cores)...")
+    atlas_mp, time_mp = time_execution(mandelbrot_mp, threshold, density, 4)
+    print(f"Multiprocessing version took {time_mp:.4f} seconds")
+    plot_atlas(atlas_mp, title="Mandelbrot Set (Multiprocessing)")
 
     print("Running CUDA version...")
     try:
@@ -299,6 +219,6 @@ if __name__ == "__main__":
     except cuda.CudaSupportError as e:
         print("CUDA is not available on this system:", e)
 
-    # Run combined benchmarks for sequential, multiprocessing, and CUDA versions.
+    # --- run the benchmarks ---
     print("\nRunning combined benchmarks for sequential, multiprocessing, and CUDA versions...")
     run_benchmarks(threshold, density)
